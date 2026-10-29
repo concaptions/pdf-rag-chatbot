@@ -100,7 +100,10 @@ function App() {
     return () => clearTimeout(t);
   }, [docs, loadDocs]);
 
-  useEffect(() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), [messages]);
+  useEffect(() => {
+    // Braces matter: newer browsers return a Promise from scrollIntoView, which React would call as a cleanup.
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
 
   async function upload(files: FileList | File[] | null) {
     const list = Array.from(files || []);
