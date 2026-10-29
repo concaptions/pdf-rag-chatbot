@@ -10,3 +10,4 @@ dist/
 .vercel/
 *.log
 *.tsbuildinfo
+!frontend/.env.production
