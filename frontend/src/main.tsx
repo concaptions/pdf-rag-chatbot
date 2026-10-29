@@ -6,7 +6,8 @@ const API = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
 type Doc = { id?: string; filename: string; status: string; error?: string | null; page_count?: number; chunk_count?: number };
 type Citation = { label: string; filename: string; page_number: number; excerpt: string };
-type Msg = { role: "user" | "assistant"; content: string; citations?: Citation[]; error?: boolean; ms?: number };
+type Msg = { role: "user" | "assistant"; content: string; citations?: Citation[]; error?: boolean; ms?: number; provider?: string | null };
+const PROVIDER_LABEL: Record<string, string> = { anthropic: "Claude", openai: "OpenAI" };
 
 function workspaceId(): string {
   try {
@@ -150,7 +151,8 @@ function App() {
           if (!ev.startsWith("data: ")) continue;
           const data = JSON.parse(ev.slice(6));
           if (data.type === "token") patch((m) => ({ ...m, content: m.content + data.text }));
-          if (data.type === "done") patch(() => ({ role: "assistant", content: data.answer, citations: data.citations || [], ms: data.timing?.total_ms }));
+          if (data.type === "reset") patch((m) => ({ ...m, content: "" }));
+          if (data.type === "done") patch(() => ({ role: "assistant", content: data.answer, citations: data.citations || [], ms: data.timing?.total_ms, provider: data.provider }));
           if (data.type === "error") patch(() => ({ role: "assistant", content: data.message, error: true }));
         }
       }
@@ -245,7 +247,11 @@ function App() {
                     ))}
                   </div>
                 )}
-                {m.ms && <span className="meta">{(m.ms / 1000).toFixed(1)} s</span>}
+                {!!m.ms && (
+                  <span className="meta">
+                    {m.provider ? `Answered by ${PROVIDER_LABEL[m.provider] ?? m.provider}, ` : ""}{(m.ms / 1000).toFixed(1)} s
+                  </span>
+                )}
               </div>
             </article>
           ))}

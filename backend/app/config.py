@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     anthropic_timeout_s: float = 60.0
     anthropic_max_retries: int = 2
 
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4.1"
+    # Provider tried first; the other one is the automatic fallback.
+    llm_primary: str = "anthropic"
+
     supabase_url: str = ""
     supabase_service_role_key: str = ""
 

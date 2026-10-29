@@ -7,7 +7,6 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-import anthropic
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -179,32 +178,28 @@ async def chat(req: ChatRequest, x_workspace_id: str | None = Header(None)):
             yield sse({"type": "error", "message": "Document retrieval failed. Please try again."})
             return
         t_retrieval = time.perf_counter() - t0
-        answer = ""
+        answer, provider, streamed = "", None, 0
         if chunks:
             try:
-                async for text in llm.stream_answer(req.question, chunks, history):
+                async for kind, text in llm.stream_answer(req.question, chunks, history):
+                    if kind == "provider":
+                        provider = text
+                        continue
+                    if kind == "reset":  # provider failed mid-answer; the fallback starts over
+                        answer, streamed = "", 0
+                        yield sse({"type": "reset"})
+                        continue
                     answer += text
-                    if "INSUFFICIENT_EVIDENCE".startswith(answer.strip()[:21]) and len(answer) < 25:
-                        continue  # hold back the sentinel instead of streaming it
-                    yield sse({"type": "token", "text": text})
-            except anthropic.RateLimitError:
-                yield sse({"type": "error", "message": "The AI service is rate-limited. Please wait a moment and retry."})
+                    # Hold text back while it could still be the INSUFFICIENT_EVIDENCE sentinel,
+                    # then flush everything not yet sent.
+                    if llm.SENTINEL.startswith(answer.strip()):
+                        continue
+                    yield sse({"type": "token", "text": answer[streamed:]})
+                    streamed = len(answer)
+            except llm.AllProvidersFailed as exc:
+                yield sse({"type": "error", "message": exc.user_message()})
                 return
-            except (anthropic.APITimeoutError, anthropic.APIConnectionError):
-                yield sse({"type": "error", "message": "The AI service timed out. Please retry."})
-                return
-            except anthropic.AuthenticationError:
-                yield sse({"type": "error", "message": "The AI service rejected the API key. Check ANTHROPIC_API_KEY on the server."})
-                return
-            except anthropic.APIStatusError as exc:
-                billing = "credit balance" in str(exc).lower()
-                yield sse({"type": "error", "message": "The AI service account has no remaining credits. Add credits in the Anthropic Console (Plans & Billing)."
-                           if billing else "The AI service returned an error. Please retry."})
-                return
-            except anthropic.APIError:
-                yield sse({"type": "error", "message": "The AI service returned an error. Please retry."})
-                return
-        if not chunks or "INSUFFICIENT_EVIDENCE" in answer:
+        if not chunks or llm.SENTINEL in answer:
             answer, citations = llm.NO_EVIDENCE, []
         else:
             answer = llm.strip_invalid_labels(answer, len(chunks))
@@ -214,7 +209,7 @@ async def chat(req: ChatRequest, x_workspace_id: str | None = Header(None)):
                                          {"workspace_id": ws, "role": "assistant", "content": answer, "citations": citations}], returning=False)
         except db.DatabaseError:
             pass  # the answer is still delivered; only history persistence failed
-        yield sse({"type": "done", "answer": answer, "citations": citations,
+        yield sse({"type": "done", "answer": answer, "citations": citations, "provider": provider,
                    "timing": {"retrieval_ms": round(t_retrieval * 1000), "total_ms": round((time.perf_counter() - t0) * 1000)}})
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

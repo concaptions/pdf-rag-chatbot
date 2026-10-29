@@ -27,7 +27,8 @@ See [docs/architecture.md](docs/architecture.md) for the full design, data flow,
 - Citations derived only from retrieved chunks; unknown labels are stripped
 - A "not enough evidence" response, with no LLM call, when retrieval finds nothing relevant
 - Persistent conversation history, and follow-up questions that use the earlier context
-- Graceful handling of Anthropic rate limits and timeouts, database outages and invalid uploads
+- Automatic AI fallback: if Claude fails (no credits, bad key, rate limit, outage), OpenAI answers, and vice versa. If both fail, the user sees a plain-language reason for each
+- Graceful handling of database outages and invalid uploads
 
 ## Prerequisites
 
@@ -62,6 +63,9 @@ npm run dev                   # http://localhost:5173
 |---|---|---|
 | `ANTHROPIC_API_KEY` | backend | Claude API key (server-side only) |
 | `ANTHROPIC_MODEL` | backend | Default `claude-opus-4-8` |
+| `OPENAI_API_KEY` | backend | Fallback provider key (server-side only) |
+| `OPENAI_MODEL` | backend | Default `gpt-4.1` (`gpt-5` also works) |
+| `LLM_PRIMARY` | backend | Provider tried first: `anthropic` (default) or `openai` |
 | `SUPABASE_URL` | backend | `https://<ref>.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | backend | Server-side only; never ship it to the browser |
 | `ALLOWED_ORIGINS` | backend | Comma-separated CORS origins, e.g. your Vercel URL |
@@ -83,6 +87,7 @@ The tests cover:
 - File-type rejection
 - The database-outage 503 path
 - The no-evidence path, which asserts that the LLM is not called
+- AI fallback in both directions, mid-answer failure reset, plain-language messages when both providers fail, and streaming that never drops the first word
 
 ## Deployment
 

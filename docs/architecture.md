@@ -8,7 +8,7 @@
 | Backend | Python FastAPI, Docker on Railway | Validation, PDF extraction, chunking, embeddings, retrieval, Anthropic calls |
 | Database | Supabase Postgres | `documents`, `chunks`, `messages` tables |
 | Vector store | Supabase pgvector (HNSW, cosine) + Postgres full-text search (GIN) | Hybrid retrieval |
-| LLM | Anthropic Messages API (streaming), server-side key only | Grounded answer generation |
+| LLM | Anthropic Messages API (streaming), with OpenAI Chat Completions as automatic fallback; server-side keys only | Grounded answer generation |
 | Embeddings | fastembed ONNX `BAAI/bge-small-en-v1.5` (384 dims), in-process | Document and query vectors |
 
 ## Why the backend is not on Vercel
@@ -50,6 +50,6 @@ Each `[Sn]` in the answer points to the nth retrieved chunk, which carries its `
 |---|---|
 | Invalid, empty, corrupted, encrypted, scanned or non-PDF file | Rejected or marked `failed`, with a readable reason |
 | Supabase unreachable or returning errors | `503` with a message, and chat streams an `error` event |
-| Anthropic rate limit, timeout, connection or API error | The SDK retries twice with backoff (60 s timeout), then the user gets a specific `error` event. The server never crashes |
+| AI provider failure (no credits, invalid key, rate limit, timeout, outage, missing model) | The SDK retries twice with backoff (60 s timeout). If the provider still fails, the other provider (Claude or OpenAI, order set by `LLM_PRIMARY`) answers instead. A failure partway through an answer sends a `reset` event, so the partial text is discarded before the fallback streams. If both fail, the user sees a plain-language reason per provider (for example "the account has run out of credits"), while the server logs the technical detail. The server never crashes |
 | No relevant evidence | A fixed "not enough evidence, consult a professional" response, with no LLM call |
 | History save fails | The answer is still delivered |
