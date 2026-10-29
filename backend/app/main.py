@@ -193,6 +193,14 @@ async def chat(req: ChatRequest, x_workspace_id: str | None = Header(None)):
             except (anthropic.APITimeoutError, anthropic.APIConnectionError):
                 yield sse({"type": "error", "message": "The AI service timed out. Please retry."})
                 return
+            except anthropic.AuthenticationError:
+                yield sse({"type": "error", "message": "The AI service rejected the API key. Check ANTHROPIC_API_KEY on the server."})
+                return
+            except anthropic.APIStatusError as exc:
+                billing = "credit balance" in str(exc).lower()
+                yield sse({"type": "error", "message": "The AI service account has no remaining credits. Add credits in the Anthropic Console (Plans & Billing)."
+                           if billing else "The AI service returned an error. Please retry."})
+                return
             except anthropic.APIError:
                 yield sse({"type": "error", "message": "The AI service returned an error. Please retry."})
                 return
