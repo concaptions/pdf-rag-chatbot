@@ -31,6 +31,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design, data flow,
 - Chat history: conversations are saved, grouped by date, and can be renamed or deleted
 - Long-conversation memory: the model sees at least the last 30 messages word for word, and older messages are automatically compacted into a running summary in the background, so a chat can continue for hundreds of messages without slowing down or forgetting
 - Topic switches and follow-ups both work: each question is searched on its own and together with the previous question, in parallel
+- Accounts: email and password sign-up and sign-in (Supabase Auth). Documents and chats belong to the account and are available on any device; data created in a browser before accounts existed is moved into the account on first sign-in
 - Collapsible sidebars: hide or show chat history and the library from the top bar (remembered per browser)
 - Model picker with 3 models per provider and a live status badge per provider (Active, Ready, Not set up, or the reason it last failed)
 - Automatic AI fallback: if the chosen model fails (no credits, bad key, rate limit, outage), the other provider answers, and a failure partway through an answer restarts cleanly. If both fail, the user sees a plain-language reason for each
@@ -50,6 +51,10 @@ In the Supabase dashboard, open the SQL Editor and run the migrations in order:
 
 Every migration is safe to run more than once.
 
+Then configure **Authentication**:
+- **Sign In / Providers → Email:** keep Email enabled. For instant sign-up, turn **Confirm email** off. If you keep it on, new users must click the emailed link before signing in, and Supabase's built-in email sender only allows a few emails per hour, so add your own SMTP under Authentication → Emails for real use.
+- **URL Configuration → Site URL:** set it to your Vercel URL, so confirmation links open the app.
+
 ### 2. Backend
 ```bash
 cd backend
@@ -64,7 +69,7 @@ uvicorn app.main:app --port 8000
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local    # VITE_API_URL=http://localhost:8000
+cp .env.example .env.local    # VITE_API_URL, VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
 npm run dev                   # http://localhost:5173
 ```
 
@@ -84,6 +89,7 @@ npm run dev                   # http://localhost:5173
 | `ALLOWED_ORIGINS` | backend | Comma-separated CORS origins, e.g. your Vercel URL |
 | `TOP_K`, `MIN_SIMILARITY`, `MAX_UPLOAD_MB` | backend | Retrieval and upload tuning |
 | `VITE_API_URL` | frontend | Public backend URL |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | frontend | Used only to sign in. The anon key is public by design: RLS gives it no data access |
 
 ## Testing
 
@@ -105,6 +111,7 @@ The tests cover:
 - Chat history: saving, follow-ups with context, listing, renaming, deleting, and isolation between workspaces
 - Model selection, unknown-model fallback, and the 3-per-provider model catalog with status
 - AI fallback in both directions, mid-answer failure reset, and plain-language messages when both providers fail
+- Authentication: every data endpoint refuses missing and invalid tokens; ES256 tokens are rejected when expired, tampered, or issued for another audience or issuer; old browser data is claimed into the account, and another account's data can never be claimed
 - Conversation memory: 30+ message window, history always starting on a user turn, old citations rendered as document and page, compaction folding exactly what is older than the window, summariser failure losing nothing, and a topic switch after a long thread still retrieving the new topic's passages
 
 ## Deployment
@@ -115,7 +122,7 @@ The tests cover:
 
 ## Production hardening (not yet implemented)
 
-- Replace the anonymous workspace ID with Supabase Auth, enforced by RLS policies on `auth.uid()`
+- Password reset by email, and an optional second factor
 - Store the original PDFs in Supabase Storage, so citations can open at the exact page
 - Add an evaluation set for retrieval and answer quality (hit rate, citation precision, abstention accuracy)
 - Faster indexing for very large books: more vCPUs on Railway, or a hosted embedding API (embedding runs at roughly 9 passages per second on the current instance)

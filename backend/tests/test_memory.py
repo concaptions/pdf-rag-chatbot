@@ -4,7 +4,7 @@ import json
 from app import db, llm, memory
 from tests.conftest import WS, provider, ready_doc
 
-H = {"X-Workspace-Id": WS}
+H = {"Authorization": f"Bearer {WS}"}
 METFORMIN = {"id": 1, "document_id": "d1", "filename": "diabetes.pdf", "page_number": 4,
              "content": "Metformin starts at 500 mg daily.", "similarity": 0.8, "score": 0.03}
 MALARIA = {"id": 2, "document_id": "d2", "filename": "tropical.pdf", "page_number": 9,

@@ -1,6 +1,9 @@
 import { Component, StrictMode, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import type { Session } from "@supabase/supabase-js";
+import { AuthScreen } from "./AuthScreen";
+import { supabase } from "./supabase";
 import { Answer, Icon, LogoMark, ModelPicker, numberCitations, type Catalog, type Choice, type Citation } from "./ui";
 
 const API = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
@@ -18,21 +21,33 @@ function storage<T>(key: string, fallback: T): T {
 function save(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
 }
-function workspaceId(): string {
-  let id = storage<string | null>("workspace_id_v2", null);
-  if (!id) {
-    try { id = localStorage.getItem("workspace_id"); } catch { id = null; }  // keep workspaces created by v1
-    id = id || crypto.randomUUID();
-    save("workspace_id_v2", id);
-  }
-  return id;
+const LEGACY_KEYS = ["workspace_id_v2", "workspace_id"];
+/** A browser workspace from before accounts existed; it is moved into the account on first sign-in. */
+function legacyWorkspaceId(): string | null {
+  try {
+    for (const k of LEGACY_KEYS) {
+      const v = localStorage.getItem(k);
+      if (v) return v.replace(/"/g, "");
+    }
+  } catch { /* storage unavailable */ }
+  return null;
 }
-const WS = workspaceId();
-const headers = { "X-Workspace-Id": WS };
+function forgetLegacyWorkspace() {
+  try { LEGACY_KEYS.forEach((k) => localStorage.removeItem(k)); } catch { /* storage unavailable */ }
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();  // refreshed automatically by supabase-js
+  return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${API}${path}`, { ...init, headers: { ...headers, ...(init?.headers || {}) } });
+  const r = await fetch(`${API}${path}`, { ...init, headers: { ...(await authHeaders()), ...(init?.headers || {}) } });
   const data = await r.json().catch(() => null);
+  if (r.status === 401) {
+    await supabase.auth.signOut();
+    throw new Error("Your session has expired. Please sign in again.");
+  }
   if (!r.ok) throw new Error(data?.detail || `The server responded with an error (${r.status}).`);
   return data as T;
 }
@@ -67,7 +82,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-function App() {
+function App({ email }: { email: string }) {
   const [docs, setDocs] = useState<Doc[]>([]);
   const [rejected, setRejected] = useState<Doc[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -113,7 +128,25 @@ function App() {
     } catch { /* picker shows loading */ }
   }, []);
 
-  useEffect(() => { loadDocs(); loadConversations(); loadCatalog(); }, [loadDocs, loadConversations, loadCatalog]);
+  useEffect(() => {
+    loadCatalog();
+    (async () => {
+      const legacy = legacyWorkspaceId();
+      if (legacy) {
+        try {
+          const moved = await api<{ documents: number; conversations: number }>("/account/claim", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ workspace_id: legacy }) });
+          forgetLegacyWorkspace();
+          if (moved.documents || moved.conversations) {
+            setNotice(`Moved ${moved.documents} document${moved.documents === 1 ? "" : "s"} and ${moved.conversations} chat${moved.conversations === 1 ? "" : "s"} from this browser into your account.`);
+          }
+        } catch (e) {
+          if ((e as Error).message.includes("another account")) forgetLegacyWorkspace();  // otherwise retry next time
+        }
+      }
+      loadDocs(); loadConversations();
+    })();
+  }, [loadDocs, loadConversations, loadCatalog]);
   useEffect(() => { if (choice) save("model_choice", choice); }, [choice]);
   useEffect(() => save("panels", panels), [panels]);
 
@@ -209,7 +242,7 @@ function App() {
     try {
       const r = await fetch(`${API}/chat`, {
         method: "POST", signal: controller.signal,
-        headers: { ...headers, "Content-Type": "application/json" },
+        headers: { ...(await authHeaders()), "Content-Type": "application/json" },
         body: JSON.stringify({ question, conversation_id: activeId, provider: choice?.provider, model: choice?.model }),
       });
       if (!r.ok || !r.body) throw new Error(`The server responded with an error (${r.status}).`);
@@ -310,6 +343,11 @@ function App() {
               ))}
             </div>
           ))}
+        </div>
+        <div className="account">
+          <span className="account-avatar" aria-hidden="true">{email.charAt(0).toUpperCase() || "?"}</span>
+          <span className="account-email" title={email}>{email}</span>
+          <button className="mini" onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
         <div className="disclaimer">{Icon.shield}<p>Answers come only from your documents. Not a substitute for professional medical advice, diagnosis or treatment.</p></div>
       </aside>
@@ -477,4 +515,17 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><ErrorBoundary><App /></ErrorBoundary></StrictMode>);
+function Root() {
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => data.subscription.unsubscribe();
+  }, []);
+  if (session === undefined) return <div className="boot"><LogoMark size={52} /></div>;
+  if (!session) return <AuthScreen />;
+  // Keyed by user, so switching accounts starts from a clean slate.
+  return <App key={session.user.id} email={session.user.email ?? ""} />;
+}
+
+createRoot(document.getElementById("root")!).render(<StrictMode><ErrorBoundary><Root /></ErrorBoundary></StrictMode>);

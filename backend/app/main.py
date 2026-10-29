@@ -10,12 +10,12 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app import db, embeddings, llm, memory
+from app import auth, db, embeddings, llm, memory
 from app.config import get_settings
 from app.pdf import PDFError, chunk_pages, extract_pages
 
@@ -56,13 +56,6 @@ def parse_ts(value: str | None) -> datetime:
         return datetime.now(timezone.utc)
 
 
-def workspace(x_workspace_id: str | None) -> str:
-    try:
-        return str(uuid.UUID(x_workspace_id or ""))
-    except ValueError:
-        raise HTTPException(400, "Missing or invalid X-Workspace-Id header.")
-
-
 def db_guard(exc: db.DatabaseError):
     return HTTPException(503, "Storage is temporarily unavailable. Please try again shortly.")
 
@@ -70,6 +63,41 @@ def db_guard(exc: db.DatabaseError):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+class ClaimRequest(BaseModel):
+    workspace_id: uuid.UUID
+
+
+@app.post("/account/claim")
+async def claim_workspace(req: ClaimRequest, ws: str = Depends(auth.current_user)):
+    """Move data created before accounts existed (a browser-generated workspace id) into the account.
+
+    Called once by the browser after sign-in. A workspace id that belongs to another account
+    can never be claimed. Documents the account already has (same file hash) are not duplicated.
+    """
+    old = str(req.workspace_id)
+    if old == ws:
+        return {"documents": 0, "conversations": 0}
+    if await auth.is_registered_user(old):
+        raise HTTPException(403, "That data belongs to another account.")
+    try:
+        old_docs = await db.select("documents", {"workspace_id": f"eq.{old}", "select": "id,sha256"})
+        old_convs = await db.select("conversations", {"workspace_id": f"eq.{old}", "select": "id"})
+        if old_docs:
+            have = {d["sha256"] for d in await db.select("documents", {"workspace_id": f"eq.{ws}", "select": "sha256"})}
+            for d in old_docs:
+                if d["sha256"] in have:  # unique (workspace_id, sha256): keep the account's copy
+                    await db.delete("documents", {"id": f"eq.{d['id']}"})
+            for table in ("documents", "chunks"):
+                await db.update(table, {"workspace_id": f"eq.{old}"}, {"workspace_id": ws})
+        if old_convs:
+            for table in ("conversations", "messages"):
+                await db.update(table, {"workspace_id": f"eq.{old}"}, {"workspace_id": ws})
+    except db.DatabaseError as exc:
+        raise db_guard(exc)
+    logger.info("workspace_claimed documents=%d conversations=%d", len(old_docs), len(old_convs))
+    return {"documents": len(old_docs), "conversations": len(old_convs)}
 
 
 @app.get("/models")
@@ -93,8 +121,7 @@ async def load_documents(ws: str, fields: str = DOC_FIELDS) -> list[dict]:
 
 
 @app.get("/documents")
-async def list_documents(x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def list_documents(ws: str = Depends(auth.current_user)):
     try:
         return await load_documents(ws)
     except db.DatabaseError as exc:
@@ -148,8 +175,7 @@ async def process_document(doc_id: str, ws: str, data: bytes) -> None:
 
 
 @app.post("/documents")
-async def upload_documents(files: list[UploadFile] = File(...), x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def upload_documents(files: list[UploadFile] = File(...), ws: str = Depends(auth.current_user)):
     if len(files) > settings.max_files_per_request:
         raise HTTPException(400, f"Upload at most {settings.max_files_per_request} files at a time.")
     results = []
@@ -189,8 +215,7 @@ async def upload_documents(files: list[UploadFile] = File(...), x_workspace_id: 
 
 
 @app.delete("/documents/{doc_id}")
-async def delete_document(doc_id: uuid.UUID, x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def delete_document(doc_id: uuid.UUID, ws: str = Depends(auth.current_user)):
     try:
         await db.delete("documents", {"id": f"eq.{doc_id}", "workspace_id": f"eq.{ws}"})
     except db.DatabaseError as exc:
@@ -202,8 +227,7 @@ async def delete_document(doc_id: uuid.UUID, x_workspace_id: str | None = Header
 
 
 @app.get("/conversations")
-async def list_conversations(x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def list_conversations(ws: str = Depends(auth.current_user)):
     try:
         return await db.select("conversations", {"workspace_id": f"eq.{ws}", "select": "id,title,created_at,updated_at",
                                                  "order": "updated_at.desc", "limit": "200"})
@@ -219,8 +243,7 @@ async def owned_conversation(conv_id: uuid.UUID, ws: str) -> dict:
 
 
 @app.get("/conversations/{conv_id}/messages")
-async def conversation_messages(conv_id: uuid.UUID, x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def conversation_messages(conv_id: uuid.UUID, ws: str = Depends(auth.current_user)):
     try:
         await owned_conversation(conv_id, ws)
         return await db.select("messages", {"conversation_id": f"eq.{conv_id}", "workspace_id": f"eq.{ws}",
@@ -235,8 +258,7 @@ class RenameRequest(BaseModel):
 
 
 @app.patch("/conversations/{conv_id}")
-async def rename_conversation(conv_id: uuid.UUID, req: RenameRequest, x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def rename_conversation(conv_id: uuid.UUID, req: RenameRequest, ws: str = Depends(auth.current_user)):
     try:
         await owned_conversation(conv_id, ws)
         await db.update("conversations", {"id": f"eq.{conv_id}"}, {"title": req.title.strip()})
@@ -246,8 +268,7 @@ async def rename_conversation(conv_id: uuid.UUID, req: RenameRequest, x_workspac
 
 
 @app.delete("/conversations/{conv_id}")
-async def delete_conversation(conv_id: uuid.UUID, x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def delete_conversation(conv_id: uuid.UUID, ws: str = Depends(auth.current_user)):
     try:
         await db.delete("conversations", {"id": f"eq.{conv_id}", "workspace_id": f"eq.{ws}"})
     except db.DatabaseError as exc:
@@ -322,8 +343,7 @@ def sse(obj: dict) -> str:
 
 
 @app.post("/chat")
-async def chat(req: ChatRequest, x_workspace_id: str | None = Header(None)):
-    ws = workspace(x_workspace_id)
+async def chat(req: ChatRequest, ws: str = Depends(auth.current_user)):
 
     async def events():
         t0 = time.perf_counter()

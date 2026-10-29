@@ -7,4 +7,5 @@ openai>=1.60
 httpx>=0.28
 pypdf==5.9.0
 pypdfium2==5.14.0
+pyjwt[crypto]==2.10.1
 fastembed==0.6.1

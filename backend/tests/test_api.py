@@ -1,10 +1,10 @@
 import json
 from datetime import datetime, timedelta, timezone
 
-from app import db, llm, main
+from app import auth, db, llm, main
 from tests.conftest import OTHER_WS, WS, provider, ready_doc
 
-H = {"X-Workspace-Id": WS}
+H = {"Authorization": f"Bearer {WS}"}
 CHUNK = {"id": 1, "document_id": "d1", "filename": "guide.pdf", "page_number": 4,
          "content": "First-line therapy is a thiazide diuretic.", "similarity": 0.82, "score": 0.03}
 
@@ -19,8 +19,36 @@ def test_health(api):
     assert api.get("/health").json() == {"status": "ok"}
 
 
-def test_requires_workspace_header(api):
-    assert api.get("/documents").status_code == 400
+def test_every_data_endpoint_requires_sign_in(api):
+    for method, path in [("get", "/documents"), ("get", "/conversations"), ("post", "/chat"), ("post", "/account/claim")]:
+        assert getattr(api, method)(path).status_code == 401
+        assert getattr(api, method)(path, headers={"Authorization": "Bearer not-a-token"}).status_code == 401
+
+
+def test_claim_moves_pre_account_data_into_the_account(api, fake_db, monkeypatch):
+    async def not_a_user(_id):
+        return False
+    monkeypatch.setattr(auth, "is_registered_user", not_a_user)
+    old = "33333333-3333-3333-3333-333333333333"
+    book = ready_doc(fake_db, ws=old, filename="book.pdf", sha256="aaa")
+    ready_doc(fake_db, ws=old, filename="dupe.pdf", sha256="bbb")
+    ready_doc(fake_db, ws=WS, filename="dupe.pdf", sha256="bbb")  # the account already has this file
+    fake_db.tables["chunks"].append({"id": 1, "document_id": book["id"], "workspace_id": old, "content": "x"})
+    fake_db.tables["conversations"].append({"id": "c1", "workspace_id": old, "title": "Old chat", "updated_at": "2026-01-01T00:00:00+00:00"})
+    r = api.post("/account/claim", headers=H, json={"workspace_id": old})
+    assert r.json() == {"documents": 2, "conversations": 1}
+    assert sorted(d["filename"] for d in api.get("/documents", headers=H).json()) == ["book.pdf", "dupe.pdf"]
+    assert fake_db.tables["chunks"][0]["workspace_id"] == WS
+    assert [c["title"] for c in api.get("/conversations", headers=H).json()] == ["Old chat"]
+
+
+def test_claim_refuses_another_accounts_data(api, fake_db, monkeypatch):
+    async def is_user(_id):
+        return True
+    monkeypatch.setattr(auth, "is_registered_user", is_user)
+    ready_doc(fake_db, ws=OTHER_WS)
+    assert api.post("/account/claim", headers=H, json={"workspace_id": OTHER_WS}).status_code == 403
+    assert api.get("/documents", headers=H).json() == []
 
 
 def test_rejects_unsupported_empty_and_fake_pdfs(api):
@@ -137,7 +165,7 @@ def test_conversation_history_is_saved_and_listed(api, fake_db):
 def test_conversations_are_isolated_between_workspaces(api, fake_db):
     llm.PROVIDERS["anthropic"] = provider("hi")
     conv_id = chat(api, "hello")[0]["id"]
-    other = {"X-Workspace-Id": OTHER_WS}
+    other = {"Authorization": f"Bearer {OTHER_WS}"}
     assert api.get("/conversations", headers=other).json() == []
     assert api.get(f"/conversations/{conv_id}/messages", headers=other).status_code == 404
     assert chat(api, "hello", headers=other, conversation_id=conv_id)[-1]["type"] == "error"

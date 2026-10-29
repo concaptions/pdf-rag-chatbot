@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app import db, embeddings, llm, main
+from app import auth, db, embeddings, llm, main
 
 WS = "11111111-1111-1111-1111-111111111111"
 OTHER_WS = "99999999-9999-9999-9999-999999999999"
@@ -98,6 +98,14 @@ def api(monkeypatch, fake_db):
         return [0.0] * 384
 
     monkeypatch.setattr(embeddings, "embed_query", fake_embed)
+
+    async def fake_verify(token):  # tests sign in with "Bearer <user id>"; anything else is rejected
+        try:
+            return str(uuid.UUID(token))
+        except ValueError:
+            raise auth.unauthorized()
+
+    monkeypatch.setattr(auth, "verify", fake_verify)
     saved = dict(llm.PROVIDERS)
     llm._last_status.clear()
     with TestClient(main.app) as client:

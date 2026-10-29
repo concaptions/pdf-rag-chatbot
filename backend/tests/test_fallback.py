@@ -95,7 +95,7 @@ def test_describe_failure(exc, reason):
 
 
 def chat_events(api, **body):
-    r = api.post("/chat", headers={"X-Workspace-Id": WS}, json={"question": "What is the metformin dose?", **body})
+    r = api.post("/chat", headers={"Authorization": f"Bearer {WS}"}, json={"question": "What is the metformin dose?", **body})
     return [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
 
 

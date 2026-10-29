@@ -58,9 +58,10 @@ Each `[Sn]` in the answer points to the nth retrieved chunk, which carries its `
 
 ## Isolation and security
 
-- The browser generates a random UUID workspace ID, stores it in localStorage and sends it as `X-Workspace-Id`. Every query, including conversations and messages, filters by it. Workspace IDs are unguessable but not authenticated, so add Supabase Auth for multi-user production use (see README).
+- **Accounts (Supabase Auth, email and password):** the browser signs in with supabase-js, which stores and refreshes the session, and sends the access token as `Authorization: Bearer` on every request. The backend (`backend/app/auth.py`) verifies it locally against the project's cached JWKS (ES256), checking signature, expiry, audience `authenticated` and issuer, so there is no network call per request. The token's user id is the `workspace_id` every query filters by, so an account only ever sees its own documents, chunks, conversations and messages, from any device. Every data endpoint returns 401 without a valid token.
+- **Data from before accounts:** on first sign-in the browser sends its old random workspace id to `POST /account/claim`, which moves those rows into the account (skipping files the account already has). An id that belongs to a registered account is refused, so no one can claim another user's data.
 - Row Level Security (RLS) is enabled on all tables with no anon or authenticated policies, and only `service_role` can execute `match_chunks`. The anon key cannot read anything. Only the backend, which holds the service-role key server-side, can access data.
-- The AI keys and the service-role key exist only in backend environment variables. The frontend holds only `VITE_API_URL`.
+- The AI keys and the service-role key exist only in backend environment variables. The frontend holds only `VITE_API_URL` and the public Supabase URL and anon key, which it uses for sign-in only.
 
 ## Failure handling
 
