@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MedDocs AI: Medical PDF RAG Chatbot",
+    "output": "architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1160,
+      470
+    ],
+    "views": [
+      {
+        "id": "upload-path",
+        "label": "Upload and indexing",
+        "focus": [
+          "web",
+          "api",
+          "ingest",
+          "db"
+        ],
+        "note": "A PDF is extracted page by page, chunked, embedded locally and written to pgvector in batches."
+      },
+      {
+        "id": "question-path",
+        "label": "Asking a question",
+        "focus": [
+          "web",
+          "api",
+          "rag",
+          "db",
+          "claude",
+          "openai"
+        ],
+        "note": "Hybrid retrieval, then Claude streams a cited answer; OpenAI takes over automatically if Claude fails."
+      },
+      {
+        "id": "security-path",
+        "label": "Accounts and security",
+        "focus": [
+          "web",
+          "auth",
+          "api",
+          "db"
+        ],
+        "note": "Email sign-in issues an ES256 token; the API verifies it on every request and scopes all data to the user."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "users",
+      "type": "external",
+      "label": "User",
+      "sublabel": "any browser or device",
+      "pos": [
+        40,
+        200
+      ],
+      "size": [
+        130,
+        64
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "React Web App",
+      "sublabel": "Vite · Vercel",
+      "pos": [
+        230,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "brand": "react"
+    },
+    {
+      "id": "auth",
+      "type": "security",
+      "label": "Supabase Auth",
+      "sublabel": "email + password",
+      "tag": "ES256 JWT",
+      "pos": [
+        230,
+        40
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "brand": "supabase"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI API",
+      "sublabel": "Railway · REST + SSE",
+      "pos": [
+        450,
+        200
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "brand": "fastapi"
+    },
+    {
+      "id": "rag",
+      "type": "backend",
+      "label": "RAG Chat Engine",
+      "sublabel": "memory · retrieval · citations",
+      "pos": [
+        680,
+        200
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "ingest",
+      "type": "backend",
+      "label": "Ingestion Pipeline",
+      "sublabel": "PDFium · chunks · ONNX",
+      "pos": [
+        450,
+        370
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "claude",
+      "type": "external",
+      "label": "Anthropic Claude",
+      "sublabel": "Sonnet · Opus · Haiku 5.5",
+      "pos": [
+        940,
+        90
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "brand": "anthropic"
+    },
+    {
+      "id": "openai",
+      "type": "external",
+      "label": "OpenAI",
+      "sublabel": "GPT-4.1 · GPT-5 · 5 mini",
+      "pos": [
+        940,
+        200
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "brand": "openai"
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Supabase Postgres",
+      "sublabel": "pgvector + full-text",
+      "tag": "RLS deny-all",
+      "pos": [
+        940,
+        370
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "brand": "supabase"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Railway",
+      "wraps": [
+        "api",
+        "rag",
+        "ingest"
+      ],
+      "pad": 16
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-to-web",
+      "from": "users",
+      "to": "web",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sign-in",
+      "from": "web",
+      "to": "auth",
+      "label": "sign in",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "web-to-api",
+      "from": "web",
+      "to": "api",
+      "label": "JWT · SSE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "jwks",
+      "from": "auth",
+      "to": "api",
+      "label": "JWKS keys",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "api-to-rag",
+      "from": "api",
+      "to": "rag",
+      "label": "question",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-to-ingest",
+      "from": "api",
+      "to": "ingest",
+      "label": "PDF upload",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        568,
+        317
+      ]
+    },
+    {
+      "id": "ingest-to-db",
+      "from": "ingest",
+      "to": "db",
+      "label": "chunks + vectors",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "rag-to-claude",
+      "from": "rag",
+      "to": "claude",
+      "label": "stream answer",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rag-to-openai",
+      "from": "rag",
+      "to": "openai",
+      "label": "fallback",
+      "variant": "dashed",
+      "labelDy": 16
+    },
+    {
+      "id": "rag-to-db",
+      "from": "rag",
+      "to": "db",
+      "label": "hybrid search",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDx": 80
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ingestion",
+      "items": [
+        "Page-by-page PDFium extraction",
+        "Page-exact chunks, local ONNX embeddings",
+        "Searchable while indexing"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Answering",
+      "items": [
+        "30+ message memory, rolling summary",
+        "pgvector + full-text, fused by RRF",
+        "Verified citations, streamed over SSE"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Models",
+      "items": [
+        "Claude Sonnet, Opus, Haiku 5.5",
+        "GPT-4.1, GPT-5, GPT-5 mini",
+        "Automatic cross-provider fallback"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Security",
+      "items": [
+        "Email + password accounts",
+        "Token verified on every request",
+        "RLS; keys stay server-side"
+      ]
+    }
+  ]
+}
