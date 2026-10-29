@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -27,6 +27,9 @@ export const Icon = {
   check: svg("M5 12l5 5 9-10", 15, 2.2),
   copy: svg("M9 9h11v11H9z|M5 15H4V4h11v1", 15),
   menu: svg("M4 7h16|M4 12h16|M4 17h16", 20),
+  panelLeft: svg("M4 5h16v14H4z|M9.5 5v14", 19),
+  panelRight: svg("M4 5h16v14H4z|M14.5 5v14", 19),
+  newChat: svg("M12 20H6a2 2 0 01-2-2V6a2 2 0 012-2h12a2 2 0 012 2v6|M15 19h6|M18 16v6", 19),
   library: svg("M5 4h4v16H5z|M11 4h4v16h-4z|M17 5l3 .8-3.7 14-3-.8", 20),
   chevron: svg("M6 9l6 6 6-6", 16, 2),
   shield: svg("M12 3l8 3v6c0 4.5-3.4 8.4-8 9-4.6-.6-8-4.5-8-9V6z", 16),
@@ -35,15 +38,17 @@ export const Icon = {
 };
 
 export function LogoMark({ size = 36 }: { size?: number }) {
+  // Each instance needs its own gradient id: a url(#id) pointing into a hidden panel's SVG renders nothing.
+  const gradient = `logo-g${useId().replace(/:/g, "")}`;
   return (
     <svg className="logo-mark" width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
       <defs>
-        <linearGradient id="logo-g" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={gradient} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#14a89c" />
           <stop offset="1" stopColor="#0a5f73" />
         </linearGradient>
       </defs>
-      <rect width="64" height="64" rx="15" fill="url(#logo-g)" />
+      <rect width="64" height="64" rx="15" fill={`url(#${gradient})`} />
       <path d="M21 13h15l10 10v26a3 3 0 0 1-3 3H21a3 3 0 0 1-3-3V16a3 3 0 0 1 3-3z" fill="#fff" />
       <path d="M36 13v8a2 2 0 0 0 2 2h8z" fill="#bfe9e4" />
       <path d="M29 29h6v6h6v6h-6v6h-6v-6h-6v-6h6z" fill="#0d7c74" />

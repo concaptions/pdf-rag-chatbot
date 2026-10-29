@@ -37,6 +37,17 @@ Vercel functions cap request bodies at 4.5 MB, have execution time limits and co
 6. Tokens stream to the browser. When the answer is complete, the backend removes any label that does not match a retrieved chunk and maps the remaining labels to `{filename, page_number, excerpt}`. **Citations are therefore always derived from retrieved content and can never be fabricated.**
 7. The question and the answer (with citations, provider and model) are saved to `messages`, and the conversation's `updated_at` moves it to the top of the history.
 
+## Conversation memory
+
+Implemented in `backend/app/memory.py`, so a chat can continue for hundreds of messages without slowing down or forgetting.
+
+- **Verbatim window:** the model always receives at least the last 30 messages word for word (`HISTORY_WINDOW`), starting on a user turn.
+- **Rolling summary:** once 50 messages are unsummarised (`HISTORY_COMPACT_AT`), everything older than the latest 30 is folded into `conversations.summary` by a fast model (Claude Haiku 5.5, or GPT-4.1 mini as fallback). `summary_upto` records the last folded message id. The summary keeps the topics asked, key facts with document and page, what the user said about themselves, and unanswered questions. It reaches the model as a second system block.
+- **Never on the critical path:** compaction runs as a background task after the reply has been streamed and saved, with one lock per conversation. If both summarisers fail, nothing is lost: the latest 50 messages are still sent verbatim and the next turn retries.
+- **Clean history:** `[Sn]` labels in earlier answers are rewritten as "(file.pdf, p. N)" before they reach the model. They cannot be confused with the current turn's sources, and their provenance is kept.
+- **Topic switches and follow-ups:** retrieval runs two searches in parallel, the question on its own and the question together with the previous user question, and interleaves them with the standalone results first. A new topic finds its own passages, and "what about its side effects?" still resolves.
+- **Speed:** on Anthropic, a cache breakpoint on the last history message lets the next turn read the system prompt and conversation from the prompt cache. OpenAI caches identical prefixes automatically.
+
 ## Citation flow
 
 Each `[Sn]` in the answer points to the nth retrieved chunk, which carries its `document_id`, `filename`, `page_number` and text. The UI numbers citations 1, 2, 3 in order of first appearance (the same order the server uses), renders each as a small inline button, and lists them as source chips (`file.pdf p. N`) under the answer. Clicking either opens the exact excerpt that was used.

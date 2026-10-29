@@ -28,7 +28,10 @@ See [docs/architecture.md](docs/architecture.md) for the full design, data flow,
 - Streaming Markdown answers over Server-Sent Events (SSE), with numbered citations and source chips that open the exact excerpt used
 - Citations derived only from retrieved chunks; unknown labels are stripped
 - Conversational replies: greetings, "what documents do you have?", out-of-scope questions and still-indexing documents all get gentle, accurate answers instead of a canned refusal
-- Chat history: conversations are saved, grouped by date, and can be renamed or deleted; follow-up questions use the earlier turns
+- Chat history: conversations are saved, grouped by date, and can be renamed or deleted
+- Long-conversation memory: the model sees at least the last 30 messages word for word, and older messages are automatically compacted into a running summary in the background, so a chat can continue for hundreds of messages without slowing down or forgetting
+- Topic switches and follow-ups both work: each question is searched on its own and together with the previous question, in parallel
+- Collapsible sidebars: hide or show chat history and the library from the top bar (remembered per browser)
 - Model picker with 3 models per provider and a live status badge per provider (Active, Ready, Not set up, or the reason it last failed)
 - Automatic AI fallback: if the chosen model fails (no credits, bad key, rate limit, outage), the other provider answers, and a failure partway through an answer restarts cleanly. If both fail, the user sees a plain-language reason for each
 - Stop generation, copy answer with citations, and a responsive layout (history and library become slide-over panels on small screens)
@@ -42,7 +45,10 @@ Python 3.12, Node 20+, a Supabase project and an Anthropic API key.
 ### 1. Supabase
 In the Supabase dashboard, open the SQL Editor and run the migrations in order:
 1. [supabase/migrations/0001_init.sql](supabase/migrations/0001_init.sql): tables, the pgvector HNSW and full-text GIN indexes, Row Level Security (RLS) and the `match_chunks` function.
-2. [supabase/migrations/0002_conversations_progress.sql](supabase/migrations/0002_conversations_progress.sql): chat history, indexing progress, document previews, and search while indexing. Safe to run more than once.
+2. [supabase/migrations/0002_conversations_progress.sql](supabase/migrations/0002_conversations_progress.sql): chat history, indexing progress, document previews, and search while indexing.
+3. [supabase/migrations/0003_conversation_memory.sql](supabase/migrations/0003_conversation_memory.sql): the rolling conversation summary. Until it is applied, chats still work with the 30+ message window, without summaries.
+
+Every migration is safe to run more than once.
 
 ### 2. Backend
 ```bash
@@ -72,6 +78,7 @@ npm run dev                   # http://localhost:5173
 | `OPENAI_MODEL` | backend | Default OpenAI model: `gpt-4.1` (or `gpt-5`, `gpt-5-mini`) |
 | `LLM_PRIMARY` | backend | Provider selected by default: `anthropic` (default) or `openai` |
 | `LLM_TIMEOUT_S`, `LLM_MAX_RETRIES` | backend | Per-request AI timeout (default 60 s) and retries (default 2) |
+| `HISTORY_WINDOW`, `HISTORY_COMPACT_AT` | backend | Messages always sent verbatim (default 30), and the unsummarised count that triggers compaction (default 50) |
 | `SUPABASE_URL` | backend | `https://<ref>.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | backend | Server-side only; never ship it to the browser |
 | `ALLOWED_ORIGINS` | backend | Comma-separated CORS origins, e.g. your Vercel URL |
@@ -98,6 +105,7 @@ The tests cover:
 - Chat history: saving, follow-ups with context, listing, renaming, deleting, and isolation between workspaces
 - Model selection, unknown-model fallback, and the 3-per-provider model catalog with status
 - AI fallback in both directions, mid-answer failure reset, and plain-language messages when both providers fail
+- Conversation memory: 30+ message window, history always starting on a user turn, old citations rendered as document and page, compaction folding exactly what is older than the window, summariser failure losing nothing, and a topic switch after a long thread still retrieving the new topic's passages
 
 ## Deployment
 

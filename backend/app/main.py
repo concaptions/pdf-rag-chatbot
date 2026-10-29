@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app import db, embeddings, llm
+from app import db, embeddings, llm, memory
 from app.config import get_settings
 from app.pdf import PDFError, chunk_pages, extract_pages
 
@@ -265,14 +265,29 @@ class ChatRequest(BaseModel):
     model: str | None = None
 
 
-async def retrieve(question: str, ws: str, history: list[dict]) -> list[dict]:
-    # Follow-up questions ("what about its side effects?") borrow the previous user turn for retrieval.
-    prev = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
-    query = f"{prev} {question}" if prev and len(question.split()) < 8 else question
+async def search(query: str, ws: str) -> list[dict]:
     vector = await embeddings.embed_query(query)
     rows = await db.rpc("match_chunks", {"query_embedding": str(vector), "query_text": query,
                                          "p_workspace_id": ws, "match_count": settings.top_k})
     return [r for r in rows if r["similarity"] >= settings.min_similarity]
+
+
+async def retrieve(question: str, ws: str, history: list[dict]) -> list[dict]:
+    """Search with the question on its own and, in a conversation, together with the previous question.
+
+    The standalone search finds a brand-new topic; the contextual one resolves follow-ups such as
+    "what about its side effects?". Both run in parallel, and results are interleaved (standalone
+    first) so neither can crowd the other out.
+    """
+    prev = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+    queries = [question] + ([f"{prev} {question}"] if prev else [])
+    results = await asyncio.gather(*(search(q, ws) for q in queries))
+    merged: dict = {}
+    for rank in range(max(len(r) for r in results)):
+        for rows in results:
+            if rank < len(rows):
+                merged.setdefault(rows[rank]["id"], rows[rank])
+    return list(merged.values())[: settings.top_k]
 
 
 def names(docs: list[dict]) -> str:
@@ -313,16 +328,15 @@ async def chat(req: ChatRequest, x_workspace_id: str | None = Header(None)):
     async def events():
         t0 = time.perf_counter()
         try:
+            summary, recent = "", []
             if req.conversation_id:
                 conv = await owned_conversation(req.conversation_id, ws)
-                history = await db.select("messages", {"conversation_id": f"eq.{conv['id']}", "select": "role,content",
-                                                       "order": "created_at.desc,id.desc", "limit": "6"})
-                history.reverse()
+                summary, recent = await memory.load(conv["id"])
             else:
                 title = " ".join(req.question.split())[:60] + ("..." if len(req.question) > 60 else "")
                 conv = (await db.insert("conversations", {"workspace_id": ws, "title": title}))[0]
-                history = []
                 yield sse({"type": "conversation", "id": conv["id"], "title": conv["title"]})
+            history = memory.as_history(recent)
             docs = await load_documents(ws, "id,filename,status,page_count,progress,preview,updated_at")
             fixed = library_reply(docs)
             chunks = [] if fixed else await retrieve(req.question, ws, history)
@@ -341,7 +355,7 @@ async def chat(req: ChatRequest, x_workspace_id: str | None = Header(None)):
         else:
             answer = ""
             try:
-                async for kind, value in llm.stream_answer(req.question, chunks, history, docs, req.provider, req.model):
+                async for kind, value in llm.stream_answer(req.question, chunks, history, docs, req.provider, req.model, summary):
                     if kind == "start":
                         used = value
                         yield sse({"type": "model", **used, "model_name": llm.model_name(used["model"])})
@@ -365,6 +379,7 @@ async def chat(req: ChatRequest, x_workspace_id: str | None = Header(None)):
                  "citations": citations, "provider": used["provider"], "model": used["model"]},
             ], returning=False)
             await db.update("conversations", {"id": f"eq.{conv['id']}"}, {"updated_at": now_iso()})
+            memory.maybe_compact(conv["id"], len(recent) + 2)  # background; never delays this reply
         except db.DatabaseError as exc:
             logger.error("history_save_failed conversation=%s error=%s", conv["id"], exc)  # answer still delivered
         yield sse({"type": "done", "answer": answer, "citations": citations, "conversation_id": conv["id"],

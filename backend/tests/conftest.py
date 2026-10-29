@@ -17,15 +17,21 @@ class FakeDB:
     def __init__(self):
         self.tables: dict[str, list[dict]] = {"documents": [], "chunks": [], "messages": [], "conversations": []}
         self.ids = itertools.count(1)
-        self.rpc_rows: list[dict] = []
+        self.rpc_rows: list[dict] | object = []  # a list, or a function of the query text
+        self.rpc_calls: list[dict] = []
 
     @staticmethod
     def _match(row: dict, params: dict) -> bool:
         for key, cond in params.items():
             if key in ("select", "order", "limit"):
                 continue
-            if not cond.startswith("eq.") or str(row.get(key)) != cond[3:]:
+            op, _, value = cond.partition(".")
+            if op == "eq" and str(row.get(key)) != value:
                 return False
+            if op == "gt" and not (row.get(key) is not None and float(row[key]) > float(value)):
+                return False
+            if op not in ("eq", "gt"):
+                raise NotImplementedError(cond)
         return True
 
     async def select(self, table: str, params: dict) -> list[dict]:
@@ -71,7 +77,9 @@ class FakeDB:
             self.tables["messages"] = [m for m in self.tables["messages"] if m.get("conversation_id") in alive]
 
     async def rpc(self, name: str, payload: dict) -> list[dict]:
-        return list(self.rpc_rows)
+        self.rpc_calls.append(payload)
+        rows = self.rpc_rows(payload["query_text"]) if callable(self.rpc_rows) else self.rpc_rows
+        return [dict(r) for r in rows]
 
 
 @pytest.fixture
@@ -101,9 +109,9 @@ def api(monkeypatch, fake_db):
 
 def provider(*chunks, fail: Exception | None = None, calls: list | None = None):
     """A fake streaming provider: yields chunks, then optionally raises."""
-    async def gen(model, messages):
+    async def gen(model, messages, summary=""):
         if calls is not None:
-            calls.append({"model": model, "messages": messages})
+            calls.append({"model": model, "messages": messages, "summary": summary})
         for c in chunks:
             yield c
         if fail:

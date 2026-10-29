@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 60.0
     llm_max_retries: int = 2
 
+    # Conversation memory: the model always sees at least `history_window` recent messages verbatim.
+    # When `history_compact_at` messages are unsummarised, older ones are folded into a running summary.
+    history_window: int = 30
+    history_compact_at: int = 50
+
     supabase_url: str = ""
     supabase_service_role_key: str = ""
 

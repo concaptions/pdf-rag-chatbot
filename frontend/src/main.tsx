@@ -83,8 +83,9 @@ function App() {
   const [source, setSource] = useState<Citation | null>(null);
   const [notice, setNotice] = useState("");
   const [loaded, setLoaded] = useState(false);
-  const [navOpen, setNavOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);  // slide-over state on small screens
   const [libOpen, setLibOpen] = useState(false);
+  const [panels, setPanels] = useState(storage("panels", { nav: true, lib: true }));  // docked state on desktop
   const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [copied, setCopied] = useState<number | null>(null);
@@ -114,6 +115,18 @@ function App() {
 
   useEffect(() => { loadDocs(); loadConversations(); loadCatalog(); }, [loadDocs, loadConversations, loadCatalog]);
   useEffect(() => { if (choice) save("model_choice", choice); }, [choice]);
+  useEffect(() => save("panels", panels), [panels]);
+
+  // Below these widths a panel is a slide-over instead of a docked column (must match styles.css).
+  const overlay = (px: number) => window.matchMedia(`(max-width: ${px}px)`).matches;
+  function toggleNav() {
+    if (overlay(860)) setNavOpen((o) => !o);
+    else setPanels((p) => ({ ...p, nav: !p.nav }));
+  }
+  function toggleLib() {
+    if (overlay(1240)) setLibOpen((o) => !o);
+    else setPanels((p) => ({ ...p, lib: !p.lib }));
+  }
   useEffect(() => {
     if (!docs.some((d) => d.status === "processing")) return;
     const t = setTimeout(loadDocs, 1500);
@@ -254,7 +267,7 @@ function App() {
     : [];
 
   return (
-    <div className={`app ${navOpen ? "nav-open" : ""} ${libOpen ? "lib-open" : ""}`}
+    <div className={`app ${navOpen ? "nav-open" : ""} ${libOpen ? "lib-open" : ""} ${panels.nav ? "" : "nav-hidden"} ${panels.lib ? "" : "lib-hidden"}`}
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragging(true); } }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
       onDrop={(e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); }}>
@@ -263,6 +276,7 @@ function App() {
         <div className="brand">
           <LogoMark size={36} />
           <div><b>MedDocs<span className="brand-ai"> AI</span></b><small>Evidence-grounded answers</small></div>
+          <button className="icon-btn panel-close" title="Hide chat history" aria-label="Hide chat history" onClick={toggleNav}>{Icon.panelLeft}</button>
         </div>
         <button className="btn new-chat" onClick={newChat}>{Icon.plus} New chat</button>
         <div className="conv-scroll">
@@ -302,14 +316,17 @@ function App() {
 
       <main className="main">
         <header className="topbar">
-          <button className="icon-btn only-mobile" aria-label="Open chat history" onClick={() => setNavOpen(true)}>{Icon.menu}</button>
+          <button className="icon-btn nav-toggle" title={panels.nav ? "Hide chat history" : "Show chat history"}
+            aria-label="Toggle chat history" aria-pressed={panels.nav} onClick={toggleNav}>{Icon.panelLeft}</button>
+          <button className="icon-btn topbar-new" title="New chat" aria-label="New chat" onClick={newChat}>{Icon.newChat}</button>
           <div className="topbar-title">
             <h1>{active?.title || "New chat"}</h1>
             <p>{ready.length ? `${ready.length} document${ready.length > 1 ? "s" : ""} · ${totalPages.toLocaleString()} pages` : "No documents yet"}{processing.length ? ` · ${processing.length} indexing` : ""}</p>
           </div>
           <ModelPicker catalog={catalog} choice={choice} onChange={setChoice} />
-          <button className="icon-btn lib-toggle" aria-label="Open document library" onClick={() => setLibOpen(true)}>
-            {Icon.library}{docs.length > 0 && <span className="count-badge">{docs.length}</span>}
+          <button className="icon-btn lib-toggle" title={panels.lib ? "Hide library" : "Show library"}
+            aria-label="Toggle document library" aria-pressed={panels.lib} onClick={toggleLib}>
+            {Icon.panelRight}{docs.length > 0 && <span className="count-badge">{docs.length}</span>}
           </button>
         </header>
 
@@ -395,7 +412,7 @@ function App() {
       <aside className="library" aria-label="Document library">
         <div className="lib-head">
           <div><h2>Library</h2><p>{docs.length ? `${ready.length} ready${processing.length ? `, ${processing.length} indexing` : ""}` : "No documents yet"}</p></div>
-          <button className="icon-btn only-overlay" aria-label="Close library" onClick={() => setLibOpen(false)}>{Icon.close}</button>
+          <button className="icon-btn panel-close" title="Hide library" aria-label="Hide library" onClick={toggleLib}>{Icon.panelRight}</button>
         </div>
         <button className={`dropzone ${uploading ? "is-busy" : ""}`} onClick={() => fileRef.current?.click()} disabled={uploading}>
           <span className="dz-icon">{uploading ? <span className="spinner" /> : Icon.upload}</span>
