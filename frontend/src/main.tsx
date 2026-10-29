@@ -26,8 +26,24 @@ const Icon = {
   send: <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>,
   close: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>,
   shield: <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.4-8 9-4.6-.6-8-4.5-8-9V6z" /></svg>,
-  logo: <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>,
 };
+
+function LogoMark({ size = 36 }: { size?: number }) {
+  return (
+    <svg className="logo-mark" width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
+      <defs>
+        <linearGradient id="logo-g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#14a89c" />
+          <stop offset="1" stopColor="#0a5f73" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="15" fill="url(#logo-g)" />
+      <path d="M21 13h15l10 10v26a3 3 0 0 1-3 3H21a3 3 0 0 1-3-3V16a3 3 0 0 1 3-3z" fill="#fff" />
+      <path d="M36 13v8a2 2 0 0 0 2 2h8z" fill="#bfe9e4" />
+      <path d="M29 29h6v6h6v6h-6v6h-6v-6h-6v-6h6z" fill="#0d7c74" />
+    </svg>
+  );
+}
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -171,7 +187,7 @@ function App() {
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }}
       onDrop={(e) => { e.preventDefault(); setDragging(false); upload(e.dataTransfer.files); }}>
       <aside className="sidebar">
-        <div className="brand"><span className="logo">{Icon.logo}</span><div><b>MedDocs AI</b><small>Evidence-grounded answers</small></div></div>
+        <div className="brand"><LogoMark size={38} /><div><b>MedDocs<span className="brand-ai"> AI</span></b><small>Evidence-grounded answers</small></div></div>
 
         <button className={`dropzone ${uploading ? "is-busy" : ""}`} onClick={() => fileRef.current?.click()} disabled={uploading}>
           <span className="dz-icon">{uploading ? <span className="spinner" /> : Icon.upload}</span>
@@ -224,7 +240,7 @@ function App() {
         <section className="thread">
           {messages.length === 0 && (
             <div className="welcome">
-              <div className="welcome-icon">{Icon.logo}</div>
+              <div className="welcome-icon"><LogoMark size={56} /></div>
               <h2>{ready ? "What would you like to know?" : "Start by uploading a medical PDF"}</h2>
               <p>{ready ? "Ask a question and get an answer grounded in your documents, with page citations." : "Clinical guidelines, drug labels, research papers or patient leaflets."}</p>
               {ready > 0 && <div className="suggestions">{SUGGESTIONS.map((s) => <button key={s} onClick={() => ask(s)}>{s}</button>)}</div>}
@@ -232,7 +248,7 @@ function App() {
           )}
           {messages.map((m, i) => (
             <article key={i} className={`msg ${m.role} ${m.error ? "is-error" : ""}`}>
-              {m.role === "assistant" && <span className="avatar">{Icon.logo}</span>}
+              {m.role === "assistant" && <span className="avatar"><LogoMark size={32} /></span>}
               <div className="bubble">
                 {m.role === "assistant"
                   ? m.content ? <Answer msg={m} onCite={setSource} /> : <div className="thinking"><span /><span /><span /> Searching your documents</div>
